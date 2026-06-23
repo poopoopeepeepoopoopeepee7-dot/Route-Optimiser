@@ -246,7 +246,29 @@
     @media (max-width: 720px) {
       .app { grid-template-columns: 1fr; grid-template-rows: 44px 40vh 1fr; }
       #map { grid-row: 2; }
-      .sidebar { grid-row: 3; border-right: none; border-top: 1px solid var(--border); }
+      .sidebar { grid-row: 3; border-right: none; border-top: 1px solid var(--border); min-width: 0; }
+    }
+
+    @media (max-width: 500px) {
+      .topbar { padding: 0 10px; gap: 8px; }
+      .logo { font-size: 12px; }
+      .topbar-divider { display: none; }
+      .tab-bar { margin-left: 0; gap: 0; }
+      .tab { padding: 5px 8px; font-size: 10px; }
+      .save-pill { display: none; }
+      #status-bar { max-width: 90px; font-size: 9px; }
+
+      .sec { padding: 10px 12px; }
+      .row { flex-wrap: wrap; }
+      #suggestions { left: 0; right: 0; }
+
+      .stats-grid { grid-template-columns: 1fr 1fr; }
+      .stat-cell { padding: 8px 8px; min-width: 0; }
+      .stat-lbl { font-size: 8px; white-space: nowrap; }
+      .stat-val { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+      .ctrl-sec .row { flex-wrap: nowrap; }
+      .btn, .btn-ghost { font-size: 10px; padding: 7px 8px; }
     }
   </style>
 </head>
@@ -504,10 +526,29 @@ document.addEventListener('click', e => {
 
 async function fetchSuggestions(q) {
   try {
-    const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6`;
-    const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
-    const data = await res.json();
+    let data = await nominatimSearch(q);
+    if (!data.length) {
+      // Fallback: minor POIs (lookouts, car parks, picnic areas) are often
+      // tagged slightly differently than how people naturally refer to them
+      // (e.g. "Knights Point Lookout" is tagged "Knights Point Lookout Car
+      // Park" in OSM). Retry with the query trimmed of trailing generic
+      // words, and again with just the leading words, before giving up.
+      const trimmed = q.replace(/\s+(lookout|car ?park|carpark|point|view ?point|viewpoint|reserve|track|walk)\s*$/i, '').trim();
+      if (trimmed && trimmed !== q) data = await nominatimSearch(trimmed);
+      if (!data.length) {
+        const firstWords = q.split(/\s+/).slice(0, 2).join(' ');
+        if (firstWords && firstWords !== q) data = await nominatimSearch(firstWords);
+      }
+    }
     suggestionsEl.innerHTML = '';
+    if (!data.length) {
+      const div = document.createElement('div');
+      div.className = 'sug-item';
+      div.style.color = 'var(--muted2)';
+      div.textContent = `No results for "${q}" — try fewer/different words, or tap the map directly`;
+      suggestionsEl.appendChild(div);
+      return;
+    }
     data.forEach(item => {
       const div = document.createElement('div');
       div.className = 'sug-item';
@@ -521,6 +562,16 @@ async function fetchSuggestions(q) {
       suggestionsEl.appendChild(div);
     });
   } catch(e) { log('Geocoding error', 'err'); }
+}
+
+// New Zealand viewbox (full country bounding box) used to bias relevance
+// ranking toward NZ results without excluding anything outside it.
+const NZ_VIEWBOX = '165.5,-33.8,179.5,-47.5';
+
+async function nominatimSearch(q) {
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=6&countrycodes=nz&viewbox=${NZ_VIEWBOX}&bounded=0`;
+  const res = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+  return res.json();
 }
 
 document.getElementById('add-btn').addEventListener('click', () => {
